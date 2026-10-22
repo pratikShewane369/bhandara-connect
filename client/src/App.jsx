@@ -142,9 +142,8 @@ function Home() {
         },
         body: JSON.stringify(Object.fromEntries(new FormData(requestForm))),
       });
-      const result = await response.json();
-      if (!response.ok || ![true, "true"].includes(result.success)) {
-        throw new Error(result.message || "Request could not be sent.");
+      if (!response.ok) {
+        throw new Error("Request could not be sent.");
       }
       requestForm.reset();
       setRequestStatus("Thanks! Your Bhandara request has been sent.");
