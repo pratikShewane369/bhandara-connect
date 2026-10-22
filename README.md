@@ -1,6 +1,6 @@
 # Bhandara Connect
 
-A community event directory and member dashboard for sharing upcoming Bhandara events. The app uses React/Vite, Express, JWT authentication in HttpOnly cookies, and local JSON files. There is no public registration and no database service.
+A community event directory and member dashboard for sharing upcoming Bhandara events. The app uses React/Vite, Express, JWT authentication in HttpOnly cookies, and MongoDB for deployed data. There is no public registration.
 
 ## Features
 
@@ -21,7 +21,7 @@ npm install
 npm run install:all
 ```
 
-Copy `.env.example` to `server/.env`. Set a unique password of at least 12 characters for each of the six example usernames and set a long random `COOKIE_SECRET`. The sample values are examples only; replace every one. On PowerShell, for example:
+Copy `.env.example` to `server/.env`. Set `MONGODB_URI` to your MongoDB connection string, a unique password of at least 12 characters for each of the six example usernames, and a long random `COOKIE_SECRET`. The sample values are examples only; replace every one. On PowerShell, for example:
 
 ```powershell
 Copy-Item .env.example server/.env
@@ -43,22 +43,23 @@ If you later change a member username, password, or display name in `server/.env
 npm run dev
 ```
 
-The Vite client runs at <http://localhost:5173> and the API at <http://localhost:4000>. The client proxies `/api` to the backend. For a production frontend build, run `npm run build`; deploy the resulting `client/dist` with an appropriately configured Express/static host and set `CLIENT_ORIGIN` to the deployed origin. Set `COOKIE_SECURE=true` behind HTTPS.
+The Vite client runs at <http://localhost:5173> and the API at <http://localhost:4000>. The client proxies `/api` to the backend. If `MONGODB_URI` is configured, the server stores members, events, and activity in MongoDB; without it, local development and tests use JSON files. Production startup requires `MONGODB_URI`. Set `COOKIE_SECURE=true` behind HTTPS and set `CLIENT_ORIGIN` to the deployed frontend origin.
 
 ## Commands
 
 - `npm install` installs the root process runner.
 - `npm run install:all` installs server and client packages.
 - `npm run init:members` creates the six initial accounts.
+- `npm run migrate:mongodb --workspace server` imports local JSON records into MongoDB without replacing records already stored there.
 - `npm run dev` starts API and frontend together.
 - `npm test` runs isolated backend API tests.
 - `npm run build` creates the production frontend bundle.
 
 ## Data and operations
 
-Runtime files are stored in `server/data/members.json`, `events.json`, and `activity.json`. JSON writes use temporary files followed by atomic replacement. Event mutations are serialized inside the server process, which protects the six-event limit for a single running instance. Startup rejects unreadable or malformed JSON instead of replacing it. Back up all three JSON files regularly and retain protected copies before manual recovery.
+With MongoDB configured, the `members`, `events`, and `activity` collections are stored in the configured database. The migration command imports existing local JSON records while preserving their IDs and password hashes. Without MongoDB, local development and tests use `server/data/members.json`, `events.json`, and `activity.json`; JSON writes use temporary files followed by atomic replacement. Event mutations are serialized inside the server process, which protects the six-event limit for a single running instance.
 
-JSON persistence assumes one server instance and a persistent writable filesystem. It is not transactional database storage and should not be shared across multiple instances. Platforms with ephemeral filesystems can lose data on restart or redeployment; attach persistent storage or use a different architecture before deploying there. Member sessions are signed JWT cookies and expire after eight hours; logout clears the browser cookie. Changing a password invalidates the current browser cookie.
+MongoDB Atlas provides persistence across Render restarts and redeployments. Keep the connection string in the hosting provider's environment variables and in the ignored `server/.env`; never commit it. The app hashes member passwords before storage. JSON file storage is intended only for local development or tests, not ephemeral production filesystems. Member sessions are signed JWT cookies and expire after eight hours; logout clears the browser cookie. Changing a password invalidates the current browser cookie.
 
 Event dates are compared and displayed using `Asia/Kolkata` by default. Set `APP_TIMEZONE` to an IANA timezone if the group operates elsewhere. Event images currently use a generated visual fallback; image upload is intentionally not enabled, so large base64 payloads cannot enter the JSON data.
 

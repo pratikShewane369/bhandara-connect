@@ -7,7 +7,8 @@ try {
   const [members] = await Promise.all(['members','events','activity'].map(readData));
   if (members.length !== 6 || members.some(m => !m.id || !m.username || !m.passwordHash || !m.displayName)) throw new Error('Member data must contain exactly six valid records.');
   if (!process.env.COOKIE_SECRET || process.env.COOKIE_SECRET.length < 32) throw new Error('COOKIE_SECRET must be configured with at least 32 characters.');
+  if (process.env.NODE_ENV === 'production' && !process.env.MONGODB_URI) throw new Error('MONGODB_URI must be configured in production.');
   await purgeExpiredEvents();
   setInterval(() => purgeExpiredEvents().catch(() => console.error('Unable to remove expired events.')), 60 * 60 * 1000).unref();
   app.listen(port, () => console.log(`Bhandara Connect API listening on ${port}`));
-} catch (error) { console.error('Storage validation failed; server was not started.'); process.exitCode = 1; }
+} catch (error) { console.error(`Startup validation failed; server was not started: ${error.message}`); process.exitCode = 1; }
