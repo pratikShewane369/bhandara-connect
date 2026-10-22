@@ -134,7 +134,7 @@ function Home() {
     const requestForm = e.currentTarget;
     setRequestStatus("Sending your request…");
     try {
-      const response = await fetch("https://formsubmit.co/ajax/bhandaraconnect369@gmail.com", {
+      const response = await fetch("https://formsubmit.co/ajax/5a276f2c07e583b44f60b2189f152ad3", {
         method: "POST",
         headers: {
           Accept: "application/json",
