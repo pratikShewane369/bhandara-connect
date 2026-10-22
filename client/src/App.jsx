@@ -136,11 +136,14 @@ function Home() {
     try {
       const response = await fetch("https://formsubmit.co/ajax/bhandaraconnect369@gmail.com", {
         method: "POST",
-        body: new FormData(requestForm),
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(Object.fromEntries(new FormData(requestForm))),
       });
       const result = await response.json();
-      if (!response.ok || result.success !== "true") {
+      if (!response.ok || ![true, "true"].includes(result.success)) {
         throw new Error(result.message || "Request could not be sent.");
       }
       requestForm.reset();
@@ -362,7 +365,7 @@ function EventCard({ event: e }) {
           </span>
         </div>
         <div className="organizer">
-          Organized with care by <b>{e.organizer}</b>
+          Informed by <b>{e.organizer}</b>
         </div>
         <div className="cardLinks">
           <Link to={`/events/${e.id}`}>
