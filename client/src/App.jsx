@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowRight,
   CalendarDays,
@@ -93,6 +93,7 @@ function App() {
     [ready, setReady] = useState(false),
     [metrics, setMetrics] = useState(null);
   const nav = useNavigate();
+  const location = useLocation();
   useEffect(() => {
     let visitorId;
     try {
@@ -146,7 +147,9 @@ function App() {
     setUser(null);
     nav("/");
   };
-  if (!ready) return <div className="loading">Loading Bhandara Connect…</div>;
+  // Public pages should render while the optional session check is in flight.
+  // Only hold the protected dashboard until we know whether a session exists.
+  if (!ready && location.pathname === "/dashboard") return <div className="loading">Loading Bhandara Connect…</div>;
   return (
     <>
       <Nav user={user} onLogout={logout} />
