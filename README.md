@@ -10,6 +10,7 @@ A community event directory and member dashboard for sharing upcoming Bhandara e
 - Event creation, editing, archiving, restoring, and deletion.
 - Server-side six-active-event limit with serialized JSON mutations.
 - Activity history and safe public API responses.
+- Public visitor statistics: total visits, estimated current visitors, and unique monthly active browsers.
 - Responsive homepage, member login, and dashboard.
 
 ## Prerequisites and setup
@@ -57,7 +58,7 @@ The Vite client runs at <http://localhost:5173> and the API at <http://localhost
 
 ## Data and operations
 
-With MongoDB configured, the `members`, `events`, and `activity` collections are stored in the configured database. The migration command imports existing local JSON records while preserving their IDs and password hashes. Without MongoDB, local development and tests use `server/data/members.json`, `events.json`, and `activity.json`; JSON writes use temporary files followed by atomic replacement. Event mutations are serialized inside the server process, which protects the six-event limit for a single running instance.
+With MongoDB configured, the `members`, `events`, and `activity` collections are stored in the configured database. Visitor metrics use separate `site_metrics`, `site_metric_monthly_visitors`, and `site_metric_online_visitors` collections. The browser stores a random anonymous ID locally; monthly active users count distinct browser IDs, and online visitors are those with a heartbeat in the last two minutes. Without MongoDB, local development and tests keep metrics in memory. The migration command imports local JSON records while preserving their IDs and password hashes. Without MongoDB, local development and tests use `server/data/members.json`, `events.json`, and `activity.json`; JSON writes use temporary files followed by atomic replacement. Event mutations are serialized inside the server process, which protects the six-event limit for a single running instance.
 
 MongoDB Atlas provides persistence across Render restarts and redeployments. Keep the connection string in the hosting provider's environment variables and in the ignored `server/.env`; never commit it. The app hashes member passwords before storage. JSON file storage is intended only for local development or tests, not ephemeral production filesystems. Member sessions are signed JWT cookies and expire after eight hours; logout clears the browser cookie. Changing a password invalidates the current browser cookie.
 

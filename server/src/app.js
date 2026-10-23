@@ -8,6 +8,7 @@ import { rateLimit } from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import { readData, writeData, serialized } from './storage.js';
 import { mutateEvent, purgeExpiredEvents } from './events.js';
+import { getMetrics, heartbeat, recordVisit } from './metrics.js';
 const secret = process.env.COOKIE_SECRET;
 const secure = process.env.COOKIE_SECURE === 'true';
 const safe = ({ id, username, displayName, profileImage, createdAt }) => ({ id, username, displayName, profileImage, createdAt });
@@ -29,6 +30,21 @@ const loginLimit = rateLimit({ windowMs: 15 * 60_000, limit: process.env.NODE_EN
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const response = (res, data, message = '') => res.json({ success: true, message, data });
 app.get('/api/health', (_req, res) => response(res, { ok: true }));
+const validVisitorId = value => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value);
+app.get('/api/metrics', wrap(async (_req, res) => response(res, await getMetrics())));
+app.post('/api/metrics/visit', wrap(async (req, res) => {
+  const visitorId = req.body?.visitorId;
+  if (!validVisitorId(visitorId)) return res.status(400).json({ success: false, message: 'A valid visitor ID is required' });
+  await recordVisit(visitorId);
+  await heartbeat(visitorId);
+  response(res, null);
+}));
+app.post('/api/metrics/heartbeat', wrap(async (req, res) => {
+  const visitorId = req.body?.visitorId;
+  if (!validVisitorId(visitorId)) return res.status(400).json({ success: false, message: 'A valid visitor ID is required' });
+  await heartbeat(visitorId);
+  response(res, null);
+}));
 app.get('/api/members', wrap(async (_req, res) => response(res, (await readData('members')).map(({ displayName, profileImage }) => ({ displayName, profileImage })))));
 app.post('/api/auth/login', loginLimit, wrap(async (req, res) => {
   if (!secret) return res.status(503).json({ success: false, message: 'Authentication is not configured' });

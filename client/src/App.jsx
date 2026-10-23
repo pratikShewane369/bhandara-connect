@@ -14,8 +14,10 @@ import {
   Pencil,
   Users,
   HeartHandshake,
+  Info,
 } from "lucide-react";
 import { api, message } from "./api";
+const visitsInFlight = new Set();
 const fmt = (d) =>
   new Date(`${d}T12:00:00`).toLocaleDateString("en-IN", {
     day: "numeric",
@@ -23,14 +25,15 @@ const fmt = (d) =>
     year: "numeric",
     timeZone: "Asia/Kolkata",
   });
-const memberPhotos = [
-  "om.jpeg",
-  "tejas.jpeg",
-  "myImage.jpg",
-  "anand.jpeg",
-  "aniket.jpeg",
-  "mangesh.jpeg",
-];
+const memberPhotos = {
+  om: "om.jpeg",
+  tejas: "tejas.jpeg",
+  pratik: "myImage.jpg",
+  anand: "anand.jpeg",
+  aniket: "aniket.jpeg",
+  mangesh: "mangesh.jpeg",
+};
+const memberOrder = ["om", "tejas", "anand", "pratik", "aniket", "mangesh"];
 const memberRoles = {
   om: "Chief Executive Officer (CEO)",
   tejas: "Chief Operating Officer (COO)",
@@ -87,8 +90,50 @@ function Nav({ user, onLogout }) {
 }
 function App() {
   const [user, setUser] = useState(null),
-    [ready, setReady] = useState(false);
+    [ready, setReady] = useState(false),
+    [metrics, setMetrics] = useState(null);
   const nav = useNavigate();
+  useEffect(() => {
+    let visitorId;
+    try {
+      visitorId = localStorage.getItem("bc_visitor_id");
+      if (!visitorId) {
+        visitorId = crypto.randomUUID();
+        localStorage.setItem("bc_visitor_id", visitorId);
+      }
+    } catch {
+      visitorId = crypto.randomUUID();
+    }
+    let visitCounted = false;
+    const sendVisit = () => {
+      let counted = false;
+      try {
+        counted = visitCounted || visitsInFlight.has(visitorId) || sessionStorage.getItem("bc_visit_counted") === "1";
+      } catch {}
+      if (!counted) visitsInFlight.add(visitorId);
+      const request = counted
+        ? api.post("/metrics/heartbeat", { visitorId })
+        : api.post("/metrics/visit", { visitorId });
+      request.then(() => {
+        if (!counted) {
+          visitCounted = true;
+          try { sessionStorage.setItem("bc_visit_counted", "1"); } catch {}
+          refresh();
+        }
+      }).catch(() => {}).finally(() => {
+        if (!counted) visitsInFlight.delete(visitorId);
+      });
+    };
+    const refresh = () => api.get("/metrics").then(r => setMetrics(r.data.data)).catch(() => {});
+    sendVisit();
+    refresh();
+    const heartbeatTimer = window.setInterval(sendVisit, 30_000);
+    const refreshTimer = window.setInterval(refresh, 30_000);
+    return () => {
+      window.clearInterval(heartbeatTimer);
+      window.clearInterval(refreshTimer);
+    };
+  }, []);
   useEffect(() => {
     api
       .get("/auth/me")
@@ -106,7 +151,7 @@ function App() {
     <>
       <Nav user={user} onLogout={logout} />
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<Home metrics={metrics} />} />
         <Route path="/events/:id" element={<Details />} />
         <Route path="/login" element={<Login onLogin={setUser} />} />
         <Route
@@ -124,7 +169,7 @@ function App() {
     </>
   );
 }
-function Home() {
+function Home({ metrics }) {
   const [events, setEvents] = useState([]),
     [members, setMembers] = useState([]),
     [error, setError] = useState("");
@@ -163,6 +208,12 @@ function Home() {
   }, []);
   return (
     <>
+      <section className="visitorMetrics" aria-label="Website visitor statistics">
+        <div className="visitorMetric"><span>Total visits</span><b>{metrics ? metrics.totalVisits.toLocaleString("en-IN") : "—"}</b></div>
+        <div className="visitorMetric"><span>Online now</span><b><i />{metrics ? metrics.currentlyOnline.toLocaleString("en-IN") : "—"}</b></div>
+        <div className="visitorMetric"><span>Active this month</span><b>{metrics ? metrics.monthlyActiveUsers.toLocaleString("en-IN") : "—"}</b></div>
+        <small>Visitor metrics are based on real-time active user tracking.</small>
+      </section>
       <section className="hero">
         <div className="heroCopy">
           <span className="eyebrow">
@@ -247,14 +298,14 @@ function Home() {
           </p>
         </div>
         <div className="groupMembers">
-          {members.map((m, i) => (
-            <div className="memberCard" key={i}>
+          {[...members].sort((a, b) => memberOrder.indexOf(a.displayName.toLowerCase()) - memberOrder.indexOf(b.displayName.toLowerCase())).map((m) => (
+            <div className="memberCard" key={m.id || m.displayName}>
               <div className="memberPhoto">
                 <span>{m.displayName.slice(0, 1).toUpperCase()}</span>
                 <img
                   src={
                     m.profileImage ||
-                    "/images/member/" + memberPhotos[i]
+                    "/images/member/" + memberPhotos[m.displayName.toLowerCase()]
                   }
                   alt={m.displayName}
                   onError={(e) => e.currentTarget.remove()}
@@ -314,6 +365,16 @@ function Home() {
           <small>Submitting a request does not publish the event automatically.</small>
           {requestStatus && <p className="requestStatus" role="status">{requestStatus}</p>}
         </form>
+      </section>
+      <section className="disclaimer" aria-label="Event information disclaimer">
+        <div className="disclaimerCard">
+          <span className="disclaimerIcon"><Info size={20} /></span>
+          <div className="disclaimerCopy">
+            <span className="eyebrow">A QUICK NOTE BEFORE YOU GO</span>
+            <b>Please check with the organizer before travelling</b>
+            <p>Event details come from outside sources and may not be verified. Bhandara Connect is not responsible if details are incorrect or an event does not take place at the listed location.</p>
+          </div>
+        </div>
       </section>
       <footer>
         <Link to="/" className="brand">
@@ -720,7 +781,18 @@ function Dashboard({ user, onProfile }) {
                     mapsUrl: "Google Maps URL",
                   }[k]
                 }
-                <input
+                {k === "description" ? (
+                  <textarea
+                    name={k}
+                    rows="4"
+                    maxLength={1000}
+                    defaultValue={form[k] || ""}
+                    onInput={(e) => {
+                      const value = e.currentTarget.value;
+                      setForm((prev) => ({ ...prev, [k]: value }));
+                    }}
+                  />
+                ) : <input
                   name={k}
                   type={
                     k === "date"
@@ -730,6 +802,7 @@ function Dashboard({ user, onProfile }) {
                         : "text"
                   }
                   defaultValue={form[k] || ""}
+                  maxLength={k === "shortDescription" ? 1000 : undefined}
                   onInput={(e) => {
                     const value = e.currentTarget.value;
                     setForm((prev) => ({ ...prev, [k]: value }));
@@ -742,7 +815,7 @@ function Dashboard({ user, onProfile }) {
                     "address",
                     "city",
                   ].includes(k)}
-                />
+                />}
               </label>
             ))}
           </div>
