@@ -15,7 +15,7 @@ const secure = process.env.COOKIE_SECURE === 'true';
 const privateCookie = 'bc_private_session';
 const privateGateCookie = 'bc_private_gate';
 const privateGatePassword = process.env.PRIVATE_EVENTS_PASSWORD;
-const privateCommissionInr = 50;
+const privateCommissionInr = 20;
 const safe = ({ id, username, displayName, profileImage, createdAt }) => ({ id, username, displayName, profileImage, createdAt });
 export const app = express();
 app.use(helmet());
@@ -249,6 +249,7 @@ app.get('/api/private/jobs/:id/applications', privateAuth, privateRole('hirer'),
   response(res, applications.filter(item => item.jobId === job.id).map((item, index) => {
     const worker = accounts.find(account => account.id === item.workerId);
     const { paymentUtr, ...safeApplication } = item;
+    if (item.status === 'selected' && ['unpaid', 'rejected'].includes(item.paymentStatus)) safeApplication.commissionAmountInr = privateCommissionInr;
     delete safeApplication.workerId;
     const revealDetails = item.paymentStatus === 'verified' && ['pending', 'accepted', 'hired'].includes(item.status);
     const applicant = !worker ? null : revealDetails ? {
@@ -276,7 +277,7 @@ app.patch('/api/private/applications/:id', privateAuth, wrap(async (req, res) =>
         item.status = 'selected'; item.commissionAmountInr = privateCommissionInr; item.commissionStatus = 'pending'; item.paymentProvider = 'PhonePe'; item.paymentStatus = 'unpaid'; item.paymentReference = randomUUID().replaceAll('-', '').slice(0, 20).toUpperCase(); item.paymentReviewNote = '';
       } else if (action === 'accept' || action === 'decline') {
         if (item.status !== 'pending') { const error = new Error('This application has already been reviewed'); error.status = 409; throw error; }
-        if (action === 'accept' && item.paymentStatus !== 'verified') { const error = new Error('Pay and verify the ₹50 commission before accepting this applicant'); error.status = 402; throw error; }
+        if (action === 'accept' && item.paymentStatus !== 'verified') { const error = new Error(`Pay and verify the ₹${privateCommissionInr} commission before accepting this applicant`); error.status = 402; throw error; }
         item.status = action === 'accept' ? 'accepted' : 'declined';
       } else {
         if (item.status !== 'accepted') { const error = new Error('Accept the application before marking the person hired'); error.status = 409; throw error; }
@@ -308,6 +309,7 @@ app.post('/api/private/applications/:id/payment', privateAuth, privateRole('hire
     if (!item || item.status !== 'selected' || !['unpaid', 'rejected'].includes(item.paymentStatus)) { const error = new Error('This application is not awaiting a payment receipt'); error.status = 409; throw error; }
     if (item.paymentUtr === parsed.data.utr) { const error = new Error('Enter a new UTR for this payment'); error.status = 409; throw error; }
     if (applications.some(other => other.id !== item.id && other.paymentUtr === parsed.data.utr) || (await readData('privateCommissionPayments')).some(payment => payment.paymentUtr === parsed.data.utr)) { const error = new Error('This UTR has already been submitted'); error.status = 409; throw error; }
+    item.commissionAmountInr = privateCommissionInr;
     item.paymentUtr = parsed.data.utr; item.paymentStatus = 'submitted'; item.paymentSubmittedAt = new Date().toISOString(); item.paymentReviewNote = ''; item.updatedAt = new Date().toISOString();
     await writeData('privateApplications', applications);
     await serialized('privateCommissionPayments', async () => {
