@@ -17,6 +17,7 @@ import {
   Info,
 } from "lucide-react";
 import { api, message } from "./api";
+import PrivateEvents from "./PrivateEvents";
 const visitsInFlight = new Set();
 const fmt = (d) =>
   new Date(`${d}T12:00:00`).toLocaleDateString("en-IN", {
@@ -25,6 +26,42 @@ const fmt = (d) =>
     year: "numeric",
     timeZone: "Asia/Kolkata",
   });
+const validCoordinates = (latitude, longitude) =>
+  Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180
+    ? { latitude, longitude }
+    : null;
+const coordinatesForEvent = (event) => {
+  const latitude = Number(event.latitude), longitude = Number(event.longitude);
+  if (event.latitude !== "" && event.longitude !== "") {
+    const saved = validCoordinates(latitude, longitude);
+    if (saved) return saved;
+  }
+  if (!event.mapsUrl) return null;
+  const patterns = [
+    /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
+  ];
+  for (const pattern of patterns) {
+    const match = event.mapsUrl.match(pattern);
+    if (match) return validCoordinates(Number(match[1]), Number(match[2]));
+  }
+  try {
+    const query = new URL(event.mapsUrl).searchParams;
+    for (const key of ["q", "query", "ll"]) {
+      const match = query.get(key)?.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+      if (match) return validCoordinates(Number(match[1]), Number(match[2]));
+    }
+  } catch {}
+  return null;
+};
+const distanceKm = (from, to) => {
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const latDelta = radians(to.latitude - from.latitude);
+  const lonDelta = radians(to.longitude - from.longitude);
+  const rawA = Math.sin(latDelta / 2) ** 2 + Math.cos(radians(from.latitude)) * Math.cos(radians(to.latitude)) * Math.sin(lonDelta / 2) ** 2;
+  const a = Math.min(1, Math.max(0, rawA));
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
 const memberPhotos = {
   om: "om.jpeg",
   tejas: "tejas.jpeg",
@@ -39,7 +76,7 @@ const memberRoles = {
   tejas: "Chief Operating Officer (COO)",
   pratik: "Application Developer",
 };
-function Nav({ user, onLogout }) {
+function Nav({ user, onLogout, onFindNearby, locating }) {
   const [open, setOpen] = useState(false);
   return (
     <header className="nav">
@@ -69,9 +106,15 @@ function Nav({ user, onLogout }) {
         <a href="/#about" onClick={() => setOpen(false)}>
           About Us
         </a>
+        <Link to="/private-events" className="privateEventsLink" onClick={() => setOpen(false)}>
+          Private Events
+        </Link>
         <a href="/#request" className="requestLink" onClick={() => setOpen(false)}>
           Req Bhandara <ArrowRight size={15} />
         </a>
+        <button className="nearbyNavButton" type="button" onClick={() => { setOpen(false); onFindNearby(); }} disabled={locating}>
+          <MapPin size={14} /> {locating ? "Finding..." : "Near me"}
+        </button>
         {user ? (
           <>
             <Link to="/dashboard">Dashboard</Link>
@@ -91,7 +134,10 @@ function Nav({ user, onLogout }) {
 function App() {
   const [user, setUser] = useState(null),
     [ready, setReady] = useState(false),
-    [metrics, setMetrics] = useState(null);
+    [metrics, setMetrics] = useState(null),
+    [nearestEvents, setNearestEvents] = useState(null),
+    [locating, setLocating] = useState(false),
+    [locationStatus, setLocationStatus] = useState("");
   const nav = useNavigate();
   const location = useLocation();
   useEffect(() => {
@@ -147,15 +193,58 @@ function App() {
     setUser(null);
     nav("/");
   };
+  function findNearestEvents() {
+    nav("/#events");
+    setNearestEvents(null);
+    if (!navigator.geolocation) {
+      setLocationStatus("Location is unavailable in this browser. Open the site over HTTPS and try again.");
+      return;
+    }
+    setLocating(true);
+    setLocationStatus("Waiting for location permission...");
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+      try {
+        const { data } = await api.get("/events");
+        const origin = { latitude: coords.latitude, longitude: coords.longitude };
+        const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+        const ranked = data.data
+          .filter((event) => event.date >= today)
+          .map((event) => {
+            const destination = coordinatesForEvent(event);
+            return destination ? { event, distance: distanceKm(origin, destination) } : null;
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, 3);
+        setNearestEvents(ranked);
+        setLocationStatus(ranked.length
+          ? "Distances are calculated on this device. Your live location is not saved or sent to the server."
+          : "No upcoming events have map coordinates yet. Add latitude and longitude in the dashboard, or use a coordinate-based Google Maps link.");
+      } catch (error) {
+        setLocationStatus(message(error));
+      } finally {
+        setLocating(false);
+      }
+    }, (error) => {
+      const text = error.code === 1
+        ? "Location permission was denied. Allow location access in your browser settings and try again."
+        : error.code === 3
+          ? "Could not get your location in time. Please try again."
+          : "Your current location could not be determined. Check your device location settings and try again.";
+      setLocationStatus(text);
+      setLocating(false);
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+  }
   // Public pages should render while the optional session check is in flight.
   // Only hold the protected dashboard until we know whether a session exists.
   if (!ready && location.pathname === "/dashboard") return <div className="loading">Loading Bhandara Connect…</div>;
   return (
     <>
-      <Nav user={user} onLogout={logout} />
+      <Nav user={user} onLogout={logout} onFindNearby={findNearestEvents} locating={locating} />
       <Routes>
-        <Route path="/" element={<Home metrics={metrics} />} />
+        <Route path="/" element={<Home metrics={metrics} nearestEvents={nearestEvents} locationStatus={locationStatus} />} />
         <Route path="/events/:id" element={<Details />} />
+        <Route path="/private-events" element={<PrivateEvents />} />
         <Route path="/login" element={<Login onLogin={setUser} />} />
         <Route
           path="/dashboard"
@@ -172,7 +261,7 @@ function App() {
     </>
   );
 }
-function Home({ metrics }) {
+function Home({ metrics, nearestEvents, locationStatus }) {
   const [events, setEvents] = useState([]),
     [members, setMembers] = useState([]),
     [error, setError] = useState("");
@@ -180,25 +269,18 @@ function Home({ metrics }) {
   async function submitRequest(e) {
     e.preventDefault();
     const requestForm = e.currentTarget;
-    setRequestStatus("Sending your request…");
+    setRequestStatus("Submitting your request...");
     try {
-      const response = await fetch("https://formsubmit.co/ajax/5a276f2c07e583b44f60b2189f152ad3", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(Object.fromEntries(new FormData(requestForm))),
-      });
-      if (!response.ok) {
-        throw new Error("Request could not be sent.");
-      }
+      await api.post("/requests", Object.fromEntries(new FormData(requestForm)));
       requestForm.reset();
-      setRequestStatus("Thanks! Your Bhandara request has been sent.");
-    } catch {
-      setRequestStatus("We couldn’t send your request. Please try again.");
+      setRequestStatus("Thanks! Your request is now available to all members in the dashboard.");
+    } catch (error) {
+      setRequestStatus(message(error));
     }
   }
+  useEffect(() => {
+    if (locationStatus) document.getElementById("events")?.scrollIntoView({ behavior: "smooth" });
+  }, [locationStatus, nearestEvents]);
   useEffect(() => {
     api
       .get("/events")
@@ -267,8 +349,23 @@ function Home({ metrics }) {
             <h2>Upcoming Bhandaras</h2>
             <p>Good food, warm company, and an open invitation.</p>
           </div>
-          <span className="counter">{events.length} / 6 events</span>
+          <div className="homeEventActions">
+            <span className="counter">{events.length} / 6 events</span>
+          </div>
         </div>
+        {locationStatus && <p className="locationStatus" role="status">{locationStatus}</p>}
+        {nearestEvents?.map(({ event, distance }) => (
+          <div className="manageRow homeNearbyRow" key={event.id}>
+            <div>
+              <b>{event.title}</b>
+              <span>{fmt(event.date)} · {event.venue}, {event.city}</span>
+            </div>
+            <div className="rowActions">
+              <span>{distance < 1 ? `${Math.round(distance * 1000)} m` : `${distance.toFixed(1)} km`}</span>
+              <a className="nearbyDirections" href={event.mapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.venue}, ${event.address}, ${event.city}`)}`} target="_blank" rel="noreferrer">Directions</a>
+            </div>
+          </div>
+        ))}
         {error ? (
           <div className="empty">{error}</div>
         ) : events.length ? (
@@ -345,14 +442,12 @@ function Home({ metrics }) {
         <div className="requestIntro">
           <span className="eyebrow">SHARE YOUR GATHERING</span>
           <h2>Request a Bhandara</h2>
-          <p>Planning a community feast? Send us the event details and we’ll review them for the Bhandara Connect calendar.</p>
+          <p>Planning a community feast? Share the details with all members. A member can add it to the upcoming Bhandaras list.</p>
         </div>
         <form className="requestForm" onSubmit={submitRequest}>
-          <input type="hidden" name="_subject" value="New Bhandara request" />
-          <input type="hidden" name="_template" value="table" />
           <div className="requestGrid">
-            <label>Event title<input name="title" placeholder="e.g. Talav File" required maxLength="120" /></label>
-            <label>Short description<input name="shortDescription" placeholder="A brief note about the feast" required maxLength="180" /></label>
+            <label>Event title<input name="title" placeholder="e.g. Talav File" required maxLength="100" /></label>
+            <label>Short description<input name="shortDescription" placeholder="A brief note about the feast" required maxLength="1000" /></label>
             <label className="requestWide">Detailed description<textarea name="description" placeholder="Share any helpful event details" rows="3" /></label>
             <label>Date<input type="date" name="date" required /></label>
             <div className="requestTimes">
@@ -363,9 +458,16 @@ function Home({ metrics }) {
             <label>City<input name="city" placeholder="City" required maxLength="100" /></label>
             <label className="requestWide">Full address<input name="address" placeholder="Street, area, city" required maxLength="240" /></label>
             <label className="requestWide">Google Maps link<input type="url" name="mapsUrl" placeholder="https://maps.app.goo.gl/..." /></label>
+            <div className="requestWide">
+              <small>Optional: paste the venue pin coordinates from Google Maps so members can find it by distance.</small>
+              <div className="requestTimes">
+                <label>Latitude<input type="number" name="latitude" min="-90" max="90" step="any" placeholder="e.g. 19.0760" /></label>
+                <label>Longitude<input type="number" name="longitude" min="-180" max="180" step="any" placeholder="e.g. 72.8777" /></label>
+              </div>
+            </div>
           </div>
-          <button className="button primary" type="submit">Send Bhandara request <ArrowRight size={17} /></button>
-          <small>Submitting a request does not publish the event automatically.</small>
+          <button className="button primary" type="submit">Share with members <ArrowRight size={17} /></button>
+          <small>Your request appears in the member dashboard and is not emailed or published automatically.</small>
           {requestStatus && <p className="requestStatus" role="status">{requestStatus}</p>}
         </form>
       </section>
@@ -653,24 +755,49 @@ function ProfileSettings({ user, onProfile }) {
 function Dashboard({ user, onProfile }) {
   const [events, setEvents] = useState([]),
     [activity, setActivity] = useState([]),
+    [requests, setRequests] = useState([]),
+    [commissionPayments, setCommissionPayments] = useState([]),
+    [commissionTotals, setCommissionTotals] = useState({ verified: 0, awaiting: 0 }),
     [err, setErr] = useState(""),
     [form, setForm] = useState(null),
     [busy, setBusy] = useState(false);
   async function load() {
     try {
-      const [e, a] = await Promise.all([
+      const [e, a, r] = await Promise.all([
         api.get("/dashboard/events"),
         api.get("/activity"),
+        api.get("/requests"),
       ]);
       setEvents(e.data.data);
       setActivity(a.data.data);
+      setRequests(r.data.data);
     } catch (x) {
       setErr(message(x));
     }
   }
   useEffect(() => {
     load();
+    if (user.username === "pratik_shewane") loadCommissionPayments();
   }, []);
+  async function loadCommissionPayments() {
+    try {
+      const result = await api.get("/admin/private-payments");
+      setCommissionPayments(result.data.data.payments);
+      setCommissionTotals({ verified: result.data.data.verifiedTotalInr, awaiting: result.data.data.awaitingTotalInr });
+    } catch (error) { setErr(message(error)); }
+  }
+  async function reviewCommissionPayment(payment, action) {
+    const confirmation = action === "verify"
+      ? `Confirm that UTR ${payment.paymentUtr} shows a received ₹${payment.amountInr} payment in PhonePe/bank records?`
+      : `Reject UTR ${payment.paymentUtr}? The hirer can submit another UTR.`;
+    if (!confirm(confirmation)) return;
+    setBusy(true); setErr("");
+    try {
+      await api.patch(`/admin/private-payments/${payment.id}`, { action });
+      await loadCommissionPayments();
+    } catch (error) { setErr(message(error)); }
+    finally { setBusy(false); }
+  }
   const active = events.filter((e) => !e.archivedAt);
   async function act(e, action) {
     if (
@@ -705,6 +832,18 @@ function Dashboard({ user, onProfile }) {
       setBusy(false);
     }
   }
+  async function acceptRequest(request) {
+    setBusy(true);
+    setErr("");
+    try {
+      await api.post(`/requests/${request.id}/accept`);
+      await load();
+    } catch (x) {
+      setErr(message(x));
+    } finally {
+      setBusy(false);
+    }
+  }
   const fields = [
     "title",
     "shortDescription",
@@ -716,6 +855,8 @@ function Dashboard({ user, onProfile }) {
     "address",
     "city",
     "mapsUrl",
+    "latitude",
+    "longitude",
   ];
   return (
     <main className="dashboard">
@@ -747,6 +888,35 @@ function Dashboard({ user, onProfile }) {
           <span>Archived</span>
           <b>{events.length - active.length}</b>
         </div>
+      </div>
+      {user.username === "pratik_shewane" && <section className="dashsection paymentReviewQueue">
+        <h2>Private Events commission review</h2>
+        <p>Verify each UTR against the payment received in PhonePe or your bank before unlocking applicant details.</p>
+        <div className="commissionSummary"><div><span>Verified commission received</span><b>₹{commissionTotals.verified.toLocaleString("en-IN")}</b></div><div><span>Awaiting UTR review</span><b>₹{commissionTotals.awaiting.toLocaleString("en-IN")}</b></div></div>
+        {!commissionPayments.length ? <div className="empty">No UTRs are waiting for review.</div> : commissionPayments.map(payment => <article className="paymentReviewRow" key={payment.id}>
+          <div><b>₹{payment.amountInr} · {payment.jobTitle}</b><span>Hirer: {payment.hirerName} · Applicant: {payment.workerName}</span><small>Paid to 9921573319-2@ibl</small><strong>UTR: {payment.paymentUtr}</strong><small>Reference: {payment.paymentReference} · Submitted {new Date(payment.submittedAt).toLocaleString("en-IN")}</small></div>
+          <div className="privateActions"><button onClick={() => reviewCommissionPayment(payment, "verify")} disabled={busy}>Verify payment</button><button onClick={() => reviewCommissionPayment(payment, "reject")} disabled={busy}>Reject UTR</button></div>
+        </article>)}
+      </section>}
+      <div className="dashsection">
+        <h2>Community requests</h2>
+        {!requests.length ? (
+          <div className="empty">No Bhandara requests are waiting for review.</div>
+        ) : requests.map((request) => (
+          <div className="manageRow" key={request.id}>
+            <div>
+              <b>{request.title}</b>
+              <span>{fmt(request.date)}{request.startTime ? ` · ${request.startTime}` : ""} · {request.venue}, {request.city}</span>
+              <span>{request.shortDescription}</span>
+            </div>
+            <div className="rowActions">
+              <button type="button" onClick={() => acceptRequest(request)} disabled={busy || active.length >= 6}>
+                Add to upcoming events
+              </button>
+            </div>
+          </div>
+        ))}
+        {active.length >= 6 && requests.length > 0 && <small>All six event slots are in use. Archive an event to make room for a request.</small>}
       </div>
       {form !== null && (
         <form className="eventForm" onSubmit={save}>
@@ -782,6 +952,8 @@ function Dashboard({ user, onProfile }) {
                     address: "Full address",
                     city: "City or village",
                     mapsUrl: "Google Maps URL",
+                    latitude: "Latitude (optional)",
+                    longitude: "Longitude (optional)",
                   }[k]
                 }
                 {k === "description" ? (
@@ -800,11 +972,16 @@ function Dashboard({ user, onProfile }) {
                   type={
                     k === "date"
                       ? "date"
+                      : ["latitude", "longitude"].includes(k)
+                        ? "number"
                       : k.toLowerCase().includes("time")
                         ? "time"
                         : "text"
                   }
                   defaultValue={form[k] || ""}
+                  step={["latitude", "longitude"].includes(k) ? "any" : undefined}
+                  min={k === "latitude" ? -90 : k === "longitude" ? -180 : undefined}
+                  max={k === "latitude" ? 90 : k === "longitude" ? 180 : undefined}
                   maxLength={k === "shortDescription" ? 1000 : undefined}
                   onInput={(e) => {
                     const value = e.currentTarget.value;
@@ -822,6 +999,7 @@ function Dashboard({ user, onProfile }) {
               </label>
             ))}
           </div>
+          <small>For nearby search, enter both map pin coordinates. In Google Maps, open the venue pin to copy its latitude and longitude.</small>
           <div className="formPreview">
             <span>Card preview</span>
             <b>{form.title || "Bhandara name"}</b>
