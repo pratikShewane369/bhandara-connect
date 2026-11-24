@@ -10,7 +10,14 @@ async function database() {
   if (!process.env.MONGODB_URI) return null;
   if (!dbPromise) {
     const client = new MongoClient(process.env.MONGODB_URI);
-    dbPromise = client.connect().then(() => client.db(process.env.MONGODB_DB || undefined));
+    dbPromise = client.connect()
+      .then(() => client.db(process.env.MONGODB_DB || undefined))
+      .catch(async error => {
+        // Let later requests retry if MongoDB was temporarily unreachable.
+        dbPromise = undefined;
+        await client.close().catch(() => {});
+        throw error;
+      });
   }
   return dbPromise;
 }

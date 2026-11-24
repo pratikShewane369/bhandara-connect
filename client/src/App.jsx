@@ -264,7 +264,8 @@ function App() {
 function Home({ metrics, nearestEvents, locationStatus }) {
   const [events, setEvents] = useState([]),
     [members, setMembers] = useState([]),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [loading, setLoading] = useState(true);
   const [requestStatus, setRequestStatus] = useState("");
   async function submitRequest(e) {
     e.preventDefault();
@@ -282,14 +283,30 @@ function Home({ metrics, nearestEvents, locationStatus }) {
     if (locationStatus) document.getElementById("events")?.scrollIntoView({ behavior: "smooth" });
   }, [locationStatus, nearestEvents]);
   useEffect(() => {
-    api
-      .get("/events")
-      .then((r) => setEvents(r.data.data))
-      .catch(() => setError("Events are temporarily unavailable."));
-    api
-      .get("/members")
-      .then((r) => setMembers(r.data.data))
-      .catch(() => {});
+    let active = true;
+    const loadWithRetry = async (url) => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          return (await api.get(url)).data.data;
+        } catch (err) {
+          const retryable = !err.response || err.response.status >= 500;
+          if (!retryable || attempt === 2) throw err;
+          await new Promise((resolve) => window.setTimeout(resolve, 700 * (attempt + 1)));
+        }
+      }
+    };
+    Promise.all([loadWithRetry("/events"), loadWithRetry("/members")])
+      .then(([nextEvents, nextMembers]) => {
+        if (!active) return;
+        setEvents(nextEvents);
+        setMembers(nextMembers);
+        setError("");
+      })
+      .catch(() => {
+        if (active) setError("Events are temporarily unavailable. Please refresh in a moment.");
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, []);
   return (
     <>
@@ -366,7 +383,9 @@ function Home({ metrics, nearestEvents, locationStatus }) {
             </div>
           </div>
         ))}
-        {error ? (
+        {loading ? (
+          <div className="empty" role="status">Loading the latest Bhandaras...</div>
+        ) : error ? (
           <div className="empty">{error}</div>
         ) : events.length ? (
           <div className="cards">
