@@ -68,7 +68,7 @@ const memberPhotos = {
   pratik: "myImage.jpg",
   anand: "anand.jpeg",
   aniket: "aniket.jpeg",
-  mangesh: "mangesh.jpeg",
+  mangesh: "Yogesh.png",
 };
 const memberOrder = ["om", "tejas", "anand", "pratik", "aniket", "mangesh"];
 const memberRoles = {
@@ -399,21 +399,26 @@ function Home({ metrics, nearestEvents, locationStatus }) {
         </div>
         <div className="groupMembers">
           {[...members].sort((a, b) => memberOrder.indexOf(a.displayName.toLowerCase()) - memberOrder.indexOf(b.displayName.toLowerCase())).map((m) => (
+            (() => {
+              const displayName = m.displayName.toLowerCase() === "mangesh" ? "Yogesh" : m.displayName;
+              return (
             <div className="memberCard" key={m.id || m.displayName}>
               <div className="memberPhoto">
-                <span>{m.displayName.slice(0, 1).toUpperCase()}</span>
+                <span>{displayName.slice(0, 1).toUpperCase()}</span>
                 <img
                   src={
                     m.profileImage ||
                     "/images/member/" + memberPhotos[m.displayName.toLowerCase()]
                   }
-                  alt={m.displayName}
+                  alt={displayName}
                   onError={(e) => e.currentTarget.remove()}
                 />
               </div>
-              <b>{m.displayName}</b>
+              <b>{displayName}</b>
               <small>{memberRoles[m.displayName.toLowerCase()] || "Community volunteer"}</small>
             </div>
+              );
+            })()
           ))}
         </div>
       </section>
